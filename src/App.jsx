@@ -1,65 +1,35 @@
-import { useState } from "react";
-import axios from "axios";
-import { motion } from "framer-motion";
+const express = require("express");
+const router = express.Router();
+const Coupon = require("../models/Coupon");
 
-function App() {
-    const [coupon, setCoupon] = useState(null);
-    const [message, setMessage] = useState("");
-    const [loading, setLoading] = useState(false);
-    const [nextClaimTime, setNextClaimTime] = useState(null);
+let couponIndex = 0;
+const availableCoupons = ["SAVE10", "WELCOME5", "DISCOUNTCOUPONS", "FREESHIP"];
+const recentClaims = new Map(); // Store recent claims with timestamps
 
-    const claimCoupon = async () => {
-        setLoading(true);
-        try {
-            const res = await axios.post("https://coupons-backend-jxqa.onrender.com/api/coupons/claim", {}, { withCredentials: true });
-            setCoupon(res.data.coupon);
-            setMessage(res.data.message);
-        } catch (err) {
-            setMessage(err.response?.data?.message || "Error claiming coupon");
+router.post("/claim", async (req, res) => {
+    const userIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
 
-            if (err.response?.status === 429) {
-                const retryAfter = 60 * 60 * 1000; // 1 hour
-                setNextClaimTime(Date.now() + retryAfter);
-            }
-        }
-        setLoading(false);
-    };
+    // **Step 1: Block claims in same session**
+    if (recentClaims.has(userIp)) {
+        return res.status(429).json({ message: "Try again later! (Session block)" });
+    }
 
-    return (
-        <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 p-4">
-            <h1 className="text-3xl font-bold text-blue-600 mb-6">Claim Your Coupon</h1>
+    // **Step 2: Check in database for 1-hour restriction**
+    const lastClaim = await Coupon.findOne({ assignedTo: userIp });
+    if (lastClaim && (Date.now() - lastClaim.assignedAt < 60 * 60 * 1000)) {
+        return res.status(429).json({ message: "Try again later! (1-hour block)" });
+    }
 
-            <button 
-                onClick={claimCoupon} 
-                disabled={loading || message.includes("Try again later")}
-                className="px-5 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md 
-                           hover:bg-blue-700 transition-all duration-200 ease-in-out disabled:bg-gray-400"
-            >
-                {loading ? "Claiming..." : message.includes("Try again later") ? "Wait to Claim Again" : "Claim Coupon"}
-            </button>
+    // **Step 3: Assign a coupon & save in DB**
+    const couponCode = availableCoupons[couponIndex];
+    couponIndex = (couponIndex + 1) % availableCoupons.length;
+    await Coupon.create({ code: couponCode, assignedTo: userIp, assignedAt: new Date() });
 
-            {coupon && (
-                <motion.p 
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5 }}
-                    className="mt-4 text-xl font-semibold text-green-600"
-                >
-                    Your Coupon: {coupon}
-                </motion.p>
-            )}
+    // **Step 4: Temporarily block user in memory for 10 seconds**
+    recentClaims.set(userIp, Date.now());
+    setTimeout(() => recentClaims.delete(userIp), 10000); // Unblock after 10 sec
 
-            <p className={`mt-4 text-lg ${message.includes("coupon") ? "text-green-600" : "text-red-500"}`}>
-                {message}
-            </p>
+    res.json({ message: "Coupon claimed!", coupon: couponCode });
+});
 
-            {nextClaimTime && (
-                <p className="text-yellow-600 mt-2">
-                    You can claim again in {Math.ceil((nextClaimTime - Date.now()) / 60000)} minutes
-                </p>
-            )}
-        </div>
-    );
-}
-
-export default App;
+module.exports = router;
