@@ -11,7 +11,7 @@ function App() {
     const claimCoupon = async () => {
         setLoading(true);
         try {
-            const res = await axios.post("https://coupons-backend-jxqa.onrender.com", {}, { withCredentials: true });
+            const res = await axios.post("https://coupons-backend-jxqa.onrender.com/api/coupons/claim", {}, { withCredentials: true });
             setCoupon(res.data.coupon);
             setMessage(res.data.message);
         } catch (err) {
